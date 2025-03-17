@@ -65,3 +65,57 @@ class RandomChestXDataset(Dataset):
         
         # Return a tuple: (text modality, image modality, label)
         return text, image_nchw, label
+
+def get_data(batch_size=32, num_workers=4):
+
+    config = Config("mm-health-bench/config/config.yml").read()
+
+    train_dataset = ChestXDataset(data_path="data/chestx", split="train", max_seq_length=256)
+    val_dataset = ChestXDataset(data_path="data/chestx", split="val", max_seq_length=256)
+    test_dataset = ChestXDataset(data_path="data/chestx", split="test", max_seq_length=256)
+
+    # text_train_dataset = TextOnlyChestX(train_dataset)
+    # text_val_dataset = TextOnlyChestX(val_dataset)
+    # text_test_dataset = TextOnlyChestX(test_dataset)
+
+
+    # image_train_dataset = ImageOnlyChestX(train_dataset)
+    # image_val_dataset = ImageOnlyChestX(val_dataset)
+    # image_test_dataset = ImageOnlyChestX(test_dataset)
+
+
+    # text_train_loader = DataLoader(text_train_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+    # text_val_loader = DataLoader(text_val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+    # text_test_loader = DataLoader(text_test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+
+    # image_train_loader = DataLoader(image_train_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+    # image_val_loader = DataLoader(image_val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+    # image_test_loader = DataLoader(image_test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+
+    # return text_train_loader, text_val_loader, text_test_loader, image_train_loader, image_val_loader, image_test_loader
+
+
+    rain_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+
+    return train_loader, val_loader, test_loader
+
+
+def generate_random_data(batch_size=32, num_workers=0):
+    # Define sample sizes for train, validation, and test splits.
+    train_samples = 3000
+    val_samples = 200
+    test_samples = 200
+
+    # Create dataset instances for each split.
+    train_dataset = RandomChestXDataset(num_samples=train_samples, num_labels=2)
+    val_dataset   = RandomChestXDataset(num_samples=val_samples, num_labels=2)
+    test_dataset  = RandomChestXDataset(num_samples=test_samples, num_labels=2)
+
+    # Create DataLoaders directly from the datasets.
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+    val_loader   = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+    test_loader  = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+
+    return train_loader, val_loader, test_loader
