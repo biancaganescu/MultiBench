@@ -10,6 +10,13 @@ from torch.nn import functional as F
 from unimodals.common_models import MLP, MaxOut_MLP
 from datasets.imdb.get_data import get_dataloader
 from training_structures.unimodal import train, test
+from torch.utils.data import DataLoader, TensorDataset
+
+def get_random_dataloader(input_dim, batch_size=128, num_samples=1000, num_classes=23):
+    X = torch.randn(num_samples, input_dim)
+    y = torch.randint(0, 2, (num_samples, num_classes)).float()
+    dataset = TensorDataset(X, y)
+    return DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
 
 if __name__ == '__main__':
@@ -25,8 +32,11 @@ if __name__ == '__main__':
     modality = 'image' if args.mod == 1 else 'text'
     encoderfile = "./log/imdb/encoder_" + modality + ".pt"
     headfile = "./log/imdb/head_" + modality + ".pt"
-    traindata, validdata, testdata = get_dataloader("./data/multimodal_imdb.hdf5", "./data/mmimdb", vgg=True, batch_size=128, no_robust=True)
-
+    # traindata, validdata, testdata = get_dataloader("./data/multimodal_imdb.hdf5", "./data/mmimdb", vgg=True, batch_size=128, no_robust=True)
+    input_dim = 4096 if args.mod == 1 else 300
+    traindata = get_random_dataloader(input_dim)
+    validdata = get_random_dataloader(input_dim)
+    testdata = get_random_dataloader(input_dim)
     log1, log2 = [], []
     for n in range(args.n_runs):
         if args.mod == 0:
@@ -46,8 +56,7 @@ if __name__ == '__main__':
         encoder = torch.load(encoderfile).cuda()
         head = torch.load(headfile).cuda()
 
-        tmp = test(encoder, head, testdata, "imdb", modality, task="multilabel", modalnum=args.mod, no_robust=True,
-             measure_time=args.measure)
+        tmp = test(encoder, head, testdata, "imdb", modality, task="multilabel", modalnum=args.mod, no_robust=True)
         log1.append(tmp['f1_micro'])
         log2.append(tmp['f1_macro'])
 
