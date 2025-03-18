@@ -30,7 +30,7 @@ if __name__ == '__main__':
     log1, log2 = [], []
     for n in range(args.n_runs):
         models = [GRUWithLinear(256, 256, 256).cuda(), VGG11Slim(256).cuda()]
-        lr = 8e-3
+        lr = 1e-5
 
         if args.fuse in set([0, 1]):
             fusion = Concat().cuda()
@@ -43,8 +43,8 @@ if __name__ == '__main__':
             head= Linear(512, 2).cuda()
 
         if not args.eval_only:
-            train(models, fusion, head, train_data, val_data, 10, early_stop=True, task="multilabel",
-                    save=filename, optimtype=torch.optim.AdamW, lr=lr, weight_decay=0.01,
+            train(models, fusion, head, train_data, val_data, 1000, early_stop=False, task="multilabel",
+                    save=filename, optimtype=torch.optim.AdamW, lr=lr, weight_decay=0.001,
                     objective=torch.nn.BCEWithLogitsLoss())
 
         print(f"Testing {filename}")

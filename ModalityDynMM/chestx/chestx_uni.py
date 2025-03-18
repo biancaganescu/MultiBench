@@ -37,17 +37,17 @@ if __name__ == '__main__':
     for n in range(args.n_runs):
         if args.mod == 0:
             model = GRUWithLinear(256, 256, 256).cuda()
-            head = MLP(256, 256, 2).cuda()
-            # train_data, val_data, test_data, _, _, _ = get_data(batch_size=32, num_workers=4)
+            head = MLP(256, 256, 14).cuda()
+            train_data, val_data, test_data = get_data(batch_size=32, num_workers=4)
         else:
             model = VGG11Slim(128).cuda()
-            head = MLP(128, 128, 2).cuda()
-            # _, _, _, train_data, val_data, test_data = get_data(batch_size=32, num_workers=4)
+            head = MLP(128, 128, 14).cuda()
+            train_data, val_data, test_data = get_data(batch_size=32, num_workers=4)
 
-        train_data, val_data, test_data = generate_random_data()
+        # train_data, val_data, test_data = generate_random_data()
 
         if not args.eval_only:
-            train(model, head, train_data, val_data, 10, early_stop=True, task="multilabel",
+            train(model, head, train_data, val_data, 100, early_stop=True, task="multilabel",
                     save_encoder=model_file, save_head=head_file,
                     modalnum=args.mod, optimtype=torch.optim.AdamW, lr=1e-4, weight_decay=0.01,
                     criterion=torch.nn.BCEWithLogitsLoss())

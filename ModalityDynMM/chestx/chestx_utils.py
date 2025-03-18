@@ -2,11 +2,11 @@ import sys
 import os 
 sys.path.append(os.getcwd())
 sys.path.append('/home/bianca/Code/MultiBench/mm_health_bench/mmhb')
-
+from torch.utils.data import random_split
 import torch
 from torch.utils.data import DataLoader, Dataset
-# from multi_health_bench.mmhb.loader import ChestXDataset
-# from multi_health_bench.mmhb.utils import Config
+from mm_health_bench.mmhb.loader import ChestXDataset
+from mm_health_bench.mmhb.utils import Config
 
 class TextOnlyChestX(Dataset):
     def __init__(self, chestx_dataset):
@@ -66,42 +66,6 @@ class RandomChestXDataset(Dataset):
         # Return a tuple: (text modality, image modality, label)
         return text, image_nchw, label
 
-def get_data(batch_size=32, num_workers=4):
-
-    config = Config("mm-health-bench/config/config.yml").read()
-
-    train_dataset = ChestXDataset(data_path="data/chestx", split="train", max_seq_length=256)
-    val_dataset = ChestXDataset(data_path="data/chestx", split="val", max_seq_length=256)
-    test_dataset = ChestXDataset(data_path="data/chestx", split="test", max_seq_length=256)
-
-    # text_train_dataset = TextOnlyChestX(train_dataset)
-    # text_val_dataset = TextOnlyChestX(val_dataset)
-    # text_test_dataset = TextOnlyChestX(test_dataset)
-
-
-    # image_train_dataset = ImageOnlyChestX(train_dataset)
-    # image_val_dataset = ImageOnlyChestX(val_dataset)
-    # image_test_dataset = ImageOnlyChestX(test_dataset)
-
-
-    # text_train_loader = DataLoader(text_train_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
-    # text_val_loader = DataLoader(text_val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
-    # text_test_loader = DataLoader(text_test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
-
-    # image_train_loader = DataLoader(image_train_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
-    # image_val_loader = DataLoader(image_val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
-    # image_test_loader = DataLoader(image_test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
-
-    # return text_train_loader, text_val_loader, text_test_loader, image_train_loader, image_val_loader, image_test_loader
-
-
-    rain_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
-
-    return train_loader, val_loader, test_loader
-
-
 def generate_random_data(batch_size=32, num_workers=0):
     # Define sample sizes for train, validation, and test splits.
     train_samples = 3000
@@ -119,3 +83,53 @@ def generate_random_data(batch_size=32, num_workers=0):
     test_loader  = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
 
     return train_loader, val_loader, test_loader
+
+
+def chestx_collate_fn(batch):
+    """
+    Each batch element is a tuple: ((image, report), target)
+    where report is currently a 1D tensor of shape (s,).
+    We want to convert each report to shape (s, 1)
+    so that the batched reports have shape (batch, s, 1).
+    """
+    images = [sample[0][0].permute(2, 0, 1) for sample in batch]
+    reports = [sample[0][1] for sample in batch]
+    targets = [sample[1] for sample in batch]
+    
+    # Process each report: if it is 1D, unsqueeze to add a feature dimension.
+    # processed_reports = []
+    # for rep in reports:
+    #     if rep.dim() == 1:
+    #         rep = rep.unsqueeze(0)
+    #     processed_reports.append(rep)
+    
+    images = torch.stack(images, dim=0)         # images: (batch, H, W, C)
+    reports = torch.stack(reports, dim=0)  # reports: (batch, s)
+    targets = torch.tensor(targets, dtype=torch.float) # targets: (batch, num_labels)
+    return reports, images, targets
+
+
+def get_data(batch_size=32, num_workers=4):
+
+    config = Config("./mm_health_bench/config/config.yml").read()
+
+    chestx_dataset = ChestXDataset(data_path="./mm_health_bench/data/chestx", max_seq_length=256)
+
+    print(chestx_dataset[0][1])
+
+    total_length = len(chestx_dataset)
+    train_length = int(0.8 * total_length)
+    val_length = int(0.1 * total_length)
+    test_length = total_length - train_length - val_length
+
+
+    train_dataset, val_dataset, test_dataset = random_split(chestx_dataset, [train_length, val_length, test_length])
+
+
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=chestx_collate_fn)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=chestx_collate_fn)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=chestx_collate_fn)
+
+    return train_loader, val_loader, test_loader
+
+
