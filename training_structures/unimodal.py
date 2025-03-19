@@ -44,7 +44,7 @@ def train(encoder, head, train_dataloader, valid_dataloader, total_epochs, early
             for j in train_dataloader:
                 op.zero_grad()
                 out = model(j[modalnum].float().to(torch.device("cuda:0" if torch.cuda.is_available() else "cpu")))
-                
+       
                 if type(criterion) == torch.nn.modules.loss.BCEWithLogitsLoss:
                     loss = criterion(out, j[-1].float().to(torch.device("cuda:0" if torch.cuda.is_available() else "cpu")))
                 else:
@@ -142,6 +142,7 @@ def single_test(encoder, head, test_dataloader, auprc=False, modalnum=0, task='c
     Returns:
         dict: Dictionary of (metric, value) relations.
     """
+    
     model = nn.Sequential(encoder, head)
     with torch.no_grad():
         pred = []
@@ -216,10 +217,10 @@ def test(encoder, head, test_dataloaders_all, dataset='default', method_name='My
     """
     if no_robust:
         def _testprocess():
-            single_test(encoder, head, test_dataloaders_all,
+            scores = single_test(encoder, head, test_dataloaders_all,
                         auprc, modalnum, task, criterion)
         all_in_one_test(_testprocess, [encoder, head])
-        return
+        return scores
 
     def _testprocess():
         single_test(encoder, head, test_dataloaders_all[list(

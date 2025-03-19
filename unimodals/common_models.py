@@ -279,6 +279,42 @@ class GRUWithLinear(torch.nn.Module):
         return out
 
 
+class GRUWithLinearTwo(torch.nn.Module):
+    """Implements a GRU with Linear Post-Processing."""
+    def __init__(self, indim, hiddim, outdim, dropout=False, dropoutp=0.1, flatten=False, has_padding=False, output_each_layer=False, batch_first=False):
+        super(GRUWithLinearTwo, self).__init__()
+        self.gru = nn.GRU(indim, hiddim, batch_first=batch_first)
+        self.linear = nn.Linear(hiddim, outdim)
+        self.dropout = dropout
+        self.dropout_layer = torch.nn.Dropout(dropoutp)
+        self.flatten = flatten
+        self.has_padding = has_padding
+        self.output_each_layer = output_each_layer
+        self.lklu = nn.LeakyReLU(0.2)
+        
+    def forward(self, x):
+        """Apply GRUWithLinear to Input."""
+        if self.has_padding:
+            x = pack_padded_sequence(
+                x[0], x[1], batch_first=True, enforce_sorted=False)
+            hidden = self.gru(x)[1][-1]  # Get the last hidden state
+        else:
+            output, hidden = self.gru(x)
+            # Use only the hidden state which is [1, batch, hidden_dim]
+            hidden = hidden[-1]  # Shape becomes [batch, hidden_dim]
+        
+        if self.dropout:
+            hidden = self.dropout_layer(hidden)
+        
+        out = self.linear(hidden)
+        
+        if self.flatten:
+            out = torch.flatten(out, 1)
+            
+        if self.output_each_layer:
+            return [0, torch.flatten(x[:, -1], 1), torch.flatten(hidden, 1), self.lklu(out)]
+        
+        return out
 
 class LSTM(torch.nn.Module):
     """Extends nn.LSTM with dropout and other features."""
@@ -1028,4 +1064,22 @@ class Transformer(nn.Module):
         x = self.conv(x.permute([0, 2, 1]))
         x = x.permute([2, 0, 1])
         x = self.transformer(x)[-1]
+        return x
+
+class ReportTransformer(nn.Module):
+    def __init__(self, vocab_size, embed_dim, transformer_dim):
+        super().__init__()
+        self.embedding = nn.Embedding(num_embeddings=vocab_size, embedding_dim=embed_dim)
+        self.conv = nn.Conv1d(embed_dim, transformer_dim, kernel_size=1, padding=0, bias=False)
+        layer = nn.TransformerEncoderLayer(d_model=transformer_dim, nhead=4)
+        self.transformer = nn.TransformerEncoder(layer, num_layers=4)
+
+    def forward(self, x):
+        x = x.long()
+        # x: (batch, seq_len) as token IDs.
+        x = self.embedding(x) # Now shape: (batch, seq_len, embed_dim)
+        x = self.conv(x.permute(0, 2, 1))  # (batch, transformer_dim, seq_len)
+        x = x.permute(2, 0, 1)  # (seq_len, batch, transformer_dim)
+        # Transformer expects input as (seq_len, batch, transformer_dim)
+        x = self.transformer(x)[-1]  # Taking the output from the last token
         return x
