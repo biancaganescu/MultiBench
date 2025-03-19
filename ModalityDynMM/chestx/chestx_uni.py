@@ -7,33 +7,36 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-from unimodals.common_models import VGG11Slim, MLP, ReportTransformer
+from unimodals.common_models import VGG11Slim, MLP, ReportTransformer, ResNetLSTMEnc
 from datasets.imdb.get_data import get_dataloader
-from training_structures_dynmm.unimodal import train, test
+from training_structures.unimodal import train, test
 from torch.utils.data import DataLoader, TensorDataset
 # from mm_health_bench.mmhb.loader import *
 # from mm_health_bench.mmhb.utils import Config
 from chestx_utils import *
+from torchvision import models
+def compute_pos_weights(train_loader):
+    """
+    Compute positive weights for BCEWithLogitsLoss based on class frequencies
+    
+    Returns:
+        torch.Tensor: Tensor of shape [num_classes] with positive weights
+    """
+    num_pos = torch.zeros(14)  # Assuming 14 classes for chest X-ray
+    num_neg = torch.zeros(14)
+    
+    for _, _, targets in train_loader:
+        num_pos += targets.sum(dim=0)
+        num_neg += (1 - targets).sum(dim=0)
+    
+    # Compute ratio of negative to positive examples
+    pos_weights = num_neg / (num_pos + 1e-5)  # Add small epsilon to prevent division by zero
+    
+    # Cap weights to prevent extreme values (optional)
+    pos_weights = torch.clamp(pos_weights, min=0.5, max=10.0)
+    
+    return pos_weights.cuda()
 
-def compute_class_weights(train_loader):
-    class_counts = torch.zeros(14)
-    total_samples = 0
-    
-    for batch in train_loader:
-        _, _, targets = batch
-        class_counts += targets.sum(dim=0)
-        total_samples += targets.size(0)
-    
-    # Calculate inverse frequency weights, capped to prevent extreme values
-    class_weights = total_samples / (class_counts + 1)  # Add 1 to prevent division by zero
-    
-    # Normalize weights to have mean of 1
-    class_weights = class_weights / class_weights.mean()
-    
-    # Cap extremely high weights to 10
-    class_weights = torch.clamp(class_weights, max=10.0)
-    
-    return class_weights.cuda()
 
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser("chestx",formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -57,11 +60,12 @@ if __name__ == '__main__':
     log1, log2 = [], []
     for n in range(args.n_runs):
         if args.mod == 0:
-            model = MLP(256, 256, 256).cuda()
+            # model = MLP(256, 256, 256).cuda()
+            model = ReportTransformer(30522, 256, 256).cuda()
             head = MLP(256, 256, 14).cuda() 
         else:
             model = VGG11Slim(256).cuda()
-            head = MLP(256, 256, 14).cuda()
+            head = MLP(256, 256, 14).cuda() 
 
         if args.balanced:
             train_data, val_data, test_data = get_data_balanced(batch_size=64, num_workers=4)
@@ -72,7 +76,7 @@ if __name__ == '__main__':
             train(model, head, train_data, val_data, 100, early_stop=True, task="multilabel",
                     save_encoder=model_file, save_head=head_file,
                     modalnum=args.mod, optimtype=torch.optim.AdamW, lr=1e-4, weight_decay=0.01,
-                    criterion=torch.nn.BCEWithLogitsLoss())
+                    criterion=torch.nn.BCEWithLogitsLoss(pos_weight=compute_pos_weights(train_data)))
 
         print(f"Testing model {model_file} and {head_file}:")
         model = torch.load(model_file).cuda()

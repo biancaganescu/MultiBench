@@ -6,7 +6,7 @@ from torch import nn
 from torch.nn import functional as F
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 from torchvision import models as tmodels
-
+import timm
 
 
 
@@ -1021,8 +1021,8 @@ class ResNetLSTMEnc(torch.nn.Module):
             torch.Tensor: Layer Output
         """
         cbatch_size = x.shape[0]
-        x = x.permute([0, 2, 1, 3, 4])  # (cbatch_size, 150, 3, 112, 112)
-        x = x.reshape(-1, 3, 112, 112)  # (cbatch_size*150, 3, 112, 112)
+        # x = x.permute([0, 2, 1, 3, 4])  # (cbatch_size, 150, 3, 112, 112)
+        # x = x.reshape(-1, 3, 112, 112)  # (cbatch_size*150, 3, 112, 112)
         x = self.enc(x)  # (cbatch_size*150, 1000)
         x = x.reshape(cbatch_size, -1, 1000)
         hidden = self.lstm(x)[1][0]
@@ -1047,8 +1047,8 @@ class Transformer(nn.Module):
         self.embed_dim = dim
         self.conv = nn.Conv1d(n_features, self.embed_dim,
                               kernel_size=1, padding=0, bias=False)
-        layer = nn.TransformerEncoderLayer(d_model=self.embed_dim, nhead=5)
-        self.transformer = nn.TransformerEncoder(layer, num_layers=5)
+        layer = nn.TransformerEncoderLayer(d_model=self.embed_dim, nhead=4)
+        self.transformer = nn.TransformerEncoder(layer, num_layers=4)
 
     def forward(self, x):
         """Apply Transformer to Input.
@@ -1083,3 +1083,39 @@ class ReportTransformer(nn.Module):
         # Transformer expects input as (seq_len, batch, transformer_dim)
         x = self.transformer(x)[-1]  # Taking the output from the last token
         return x
+
+class ImageToTransformer(nn.Module):
+    def __init__(self, image_size=256, transformer_dim=256):
+        super().__init__()
+        # First, use convolutional layers to extract features from the image
+        self.feature_extractor = nn.Sequential(
+            nn.Conv2d(3, 64, kernel_size=3, stride=2, padding=1),  # 128x128
+            nn.ReLU(),
+            nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1),  # 64x64
+            nn.ReLU(),
+            nn.Conv2d(128, 256, kernel_size=3, stride=2, padding=1),  # 32x32
+            nn.ReLU()
+        )
+        
+        # Create the transformer with the correct dimensions
+        # n_features should be the spatial dimension (32*32 = 1024), not the channel dimension
+        self.transformer = Transformer(n_features=1024, dim=transformer_dim)
+        
+    def forward(self, x):
+        # Handle list input if needed
+        if isinstance(x, list):
+            x = x[0]
+            
+        # Extract features
+        features = self.feature_extractor(x)  # [batch, 256, 32, 32]
+        
+        # Transpose to match the Transformer's expected input
+        # Need to go from [batch, channels, height, width] to [batch, height*width, channels]
+        batch_size, channels, height, width = features.shape
+        # Reshape to [batch, channels, height*width]
+        features = features.view(batch_size, channels, height*width)
+        
+        # Pass to the transformer
+        output = self.transformer(features)
+        
+        return output

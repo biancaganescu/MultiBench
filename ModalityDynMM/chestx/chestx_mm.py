@@ -6,7 +6,7 @@ import argparse
 import numpy as np
 import torch
 
-from unimodals.common_models import VGG11Slim, MLP, Linear
+from unimodals.common_models import VGG11Slim, MLP, Linear, ReportTransformer
 from datasets.imdb.get_data import get_dataloader
 from fusions.common_fusions import Concat, LowRankTensorFusion, MultiplicativeInteractions2Modal
 from ModalityDynMM.training_structures_dynmm.Supervised_Learning import train, test
@@ -34,8 +34,8 @@ if __name__ == '__main__':
 
     log1, log2 = [], []
     for n in range(args.n_runs):
-        models = [MLP(256, 256, 256).cuda(), VGG11Slim(256).cuda()]
-        lr = 8e-3
+        models = [ReportTransformer(30522, 256, 256).cuda(), VGG11Slim(256).cuda()]
+        lr = 1e-4
         if args.fuse in set([0, 1]):
             fusion = Concat().cuda()
             head= Linear(512, 14).cuda()

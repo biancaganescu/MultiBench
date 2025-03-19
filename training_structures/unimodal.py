@@ -217,9 +217,9 @@ def test(encoder, head, test_dataloaders_all, dataset='default', method_name='My
     """
     if no_robust:
         def _testprocess():
-            scores = single_test(encoder, head, test_dataloaders_all,
+            single_test(encoder, head, test_dataloaders_all,
                         auprc, modalnum, task, criterion)
-        all_in_one_test(_testprocess, [encoder, head])
+        scores = all_in_one_test(_testprocess, [encoder, head])
         return scores
 
     def _testprocess():
