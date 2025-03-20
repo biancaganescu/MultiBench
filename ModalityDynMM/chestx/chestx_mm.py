@@ -30,15 +30,15 @@ if __name__ == '__main__':
     if args.balanced:
         train_data, val_data, test_data = get_data_balanced(batch_size=64)
     else:
-        train_data, val_data, test_data = get_data(batch_size=64)
+        train_data, val_data, test_data = get_data(batch_size=32)
 
     log1, log2 = [], []
     for n in range(args.n_runs):
-        models = [ReportTransformer(30522, 256, 256).cuda(), VGG11Slim(256).cuda()]
+        models = [ReportTransformer(30522, 256, 256).cuda(), VGG11Slim(1024).cuda()]
         lr = 1e-4
         if args.fuse in set([0, 1]):
             fusion = Concat().cuda()
-            head= Linear(512, 14).cuda()
+            head= Linear(1280, 14).cuda()
         elif args.fuse == 2:
             fusion = LowRankTensorFusion([256, 256], 512, 128).cuda()
             head= Linear(512, 14).cuda()
@@ -54,7 +54,7 @@ if __name__ == '__main__':
 
         print(f"Testing {filename}")
         model = torch.load(filename).cuda()
-
+        model.eval()
         tmp = test(model, test_data, method_name=fusion_dict[args.fuse], dataset="default", criterion=torch.nn.BCEWithLogitsLoss(),task="multilabel", no_robust=True)
         print("tmp ", tmp)
         log1.append(tmp['f1_micro'])

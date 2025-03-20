@@ -7,7 +7,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-from unimodals.common_models import VGG11Slim, MLP, ReportTransformer, ResNetLSTMEnc
+from unimodals.common_models import VGG11Slim, MLP, ReportTransformer
 from datasets.imdb.get_data import get_dataloader
 from training_structures.unimodal import train, test
 from torch.utils.data import DataLoader, TensorDataset
@@ -70,18 +70,18 @@ if __name__ == '__main__':
         if args.balanced:
             train_data, val_data, test_data = get_data_balanced(batch_size=64, num_workers=4)
         else:
-            train_data, val_data, test_data = get_data(batch_size=64, num_workers=4)
+            train_data, val_data, test_data = get_data(batch_size=32, num_workers=4)
 
         if not args.eval_only:
             train(model, head, train_data, val_data, 100, early_stop=True, task="multilabel",
                     save_encoder=model_file, save_head=head_file,
                     modalnum=args.mod, optimtype=torch.optim.AdamW, lr=1e-4, weight_decay=0.01,
-                    criterion=torch.nn.BCEWithLogitsLoss(pos_weight=compute_pos_weights(train_data)))
+                    criterion=torch.nn.BCEWithLogitsLoss())
 
         print(f"Testing model {model_file} and {head_file}:")
         model = torch.load(model_file).cuda()
         head = torch.load(head_file).cuda()
-
+        model.eval()
         tmp = test(model, head, test_data, "default", modality, task="multilabel", modalnum=args.mod, no_robust=True)
         log1.append(tmp['f1_micro'])
         log2.append(tmp['f1_macro'])

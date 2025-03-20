@@ -2,7 +2,7 @@ import sys
 import os 
 sys.path.append(os.getcwd())
 sys.path.append('/home/bianca/Code/MultiBench/mm_health_bench/mmhb')
-from torch.utils.data import random_split
+from torch.utils.data import random_split, Subset
 import torch
 from torch.utils.data import DataLoader, Dataset
 from mm_health_bench.mmhb.loader import ChestXDataset
@@ -62,7 +62,7 @@ def generate_random_data(batch_size=32, num_workers=0):
 
 def chestx_collate_fn(batch):
 
-    images = [sample[0][0].permute(2, 0, 1) for sample in batch]
+    images = [sample[0][0] for sample in batch]
     reports = [sample[0][1] for sample in batch]
     targets = [sample[1] for sample in batch]
 

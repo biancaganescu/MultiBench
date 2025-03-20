@@ -2,14 +2,21 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 import random
+import sys 
+import os 
+sys.path.append(os.getcwd())
+sys.path.append('/home/bianca/Code/MultiBench/mm_health_bench/mmhb')
+from torch.utils.data import random_split, Subset
+import torch
+from torch.utils.data import DataLoader, Dataset
+from mm_health_bench.mmhb.loader import ChestXDataset
+from mm_health_bench.mmhb.utils import Config
+from torch.utils.data import WeightedRandomSampler, RandomSampler
+
 
 
 class NoiseAugmenter:
-    """
-    Class to apply various noise transformations to chest X-ray data.
-    Can be used to test robustness of the quality-aware multimodal fusion.
-    """
-    
+   
     @staticmethod
     def add_gaussian_noise_to_image(image, mean=0.0, std=0.1):
         """
@@ -25,7 +32,7 @@ class NoiseAugmenter:
         """
         noise = torch.randn_like(image) * std + mean
         noisy_image = image + noise
-        # Clip to valid image range [0, 1]
+        # Clip to valid image range [0, 1]'
         return torch.clamp(noisy_image, 0, 1)
     
     @staticmethod
@@ -190,7 +197,7 @@ class NoiseAugmenter:
         return result
     
     @staticmethod
-    def corrupt_text(text, corruption_prob=0.1, pad_token_id=0):
+    def corrupt_text(text, corruption_prob=0.3, pad_token_id=0):
         """
         Corrupt text by randomly replacing tokens with random tokens.
         
@@ -244,7 +251,7 @@ def noisy_chestx_collate_fn(batch, image_noise_type=None, text_noise_type=None,
         tuple: (reports, images, targets) with noise applied
     """
     # Apply regular collate function first
-    images = [sample[0][0].permute(2, 0, 1) for sample in batch]
+    images = [sample[0][0] for sample in batch]
     reports = [sample[0][1] for sample in batch]
     targets = [sample[1] for sample in batch]
     
@@ -305,7 +312,8 @@ def get_data_with_noise(batch_size=32, num_workers=4,
                        image_noise_type=None, text_noise_type=None,
                        image_noise_params=None, text_noise_params=None,
                        image_noise_percentage=100, text_noise_percentage=100,
-                       apply_to_train=True, apply_to_val=True, apply_to_test=True):
+                       apply_to_train=True, apply_to_val=True, apply_to_test=True,
+                       indices_path="split_indices.pth"):
     """
     Get data loaders with specified noise applied to images and/or text.
     
@@ -333,9 +341,31 @@ def get_data_with_noise(batch_size=32, num_workers=4,
     val_length = int(0.1 * total_length)
     test_length = total_length - train_length - val_length
     
-    train_dataset, val_dataset, test_dataset = random_split(
-        chestx_dataset, [train_length, val_length, test_length]
-    )
+    
+    # Check if a saved split exists.
+    if os.path.exists(indices_path):
+        indices = torch.load(indices_path)
+        train_indices = indices['train']
+        val_indices = indices['val']
+        test_indices = indices['test']
+        
+        # Create subsets based on the saved indices.
+        train_dataset = Subset(chestx_dataset, train_indices)
+        val_dataset = Subset(chestx_dataset, val_indices)
+        test_dataset = Subset(chestx_dataset, test_indices)
+        print(f"Loaded split indices from {indices_path}")
+    else:
+        # Generate new splits and save the indices.
+        train_dataset, val_dataset, test_dataset = torch.utils.data.random_split(
+            chestx_dataset, [train_length, val_length, test_length]
+        )
+        indices = {
+            'train': train_dataset.indices,
+            'val': val_dataset.indices,
+            'test': test_dataset.indices,
+        }
+        torch.save(indices, indices_path)
+        print(f"Saved split indices to {indices_path}")
     
     # Regular collate function (no noise)
     regular_collate = lambda batch: noisy_chestx_collate_fn(
@@ -382,252 +412,3 @@ def get_data_with_noise(batch_size=32, num_workers=4,
     
     return train_loader, val_loader, test_loader
 
-
-def run_robustness_experiments(model, noise_levels=None, percentage_levels=None, experiment_name="robustness_test"):
-    """
-    Run a series of robustness experiments with different noise types, levels, and percentages.
-    
-    Args:
-        model: The model to evaluate
-        noise_levels (list, optional): List of noise intensity levels to test
-        percentage_levels (list, optional): List of percentage levels to test (what % of data gets noise)
-        experiment_name (str): Name for the experiment
-        
-    Returns:
-        dict: Results of all experiments
-    """
-    if noise_levels is None:
-        noise_levels = [0.1, 0.2, 0.3, 0.4]
-        
-    if percentage_levels is None:
-        percentage_levels = [25, 50, 75, 100]
-    
-    results = {}
-    
-    # Test image noise types with varying intensities (fixed 100% coverage)
-    image_noise_types = ['gaussian', 'salt_pepper', 'quality_reduction', 'masking']
-    for noise_type in image_noise_types:
-        print(f"Testing {noise_type} noise on images with varying intensities...")
-        noise_results = []
-        
-        for level in noise_levels:
-            # Configure noise parameters based on type
-            if noise_type == 'gaussian':
-                params = {'std': level}
-            elif noise_type == 'salt_pepper':
-                params = {'amount': level}
-            elif noise_type == 'quality_reduction':
-                params = {'blur_factor': level, 'noise_level': level/2}
-            elif noise_type == 'masking':
-                params = {'mask_size': level, 'num_masks': int(5 * level)}
-            
-            # Get test data with this noise configuration
-            _, _, test_loader = get_data_with_noise(
-                image_noise_type=noise_type,
-                image_noise_params=params,
-                image_noise_percentage=100,  # Apply to all images
-                text_noise_percentage=0      # No text noise
-            )
-            
-            # Reset model stats
-            model.reset_weight()
-            model.reset_selection_stats()
-            
-            # Test the model
-            test_results = test(
-                model=model, 
-                test_dataloaders_all=test_loader, 
-                dataset="chestx", 
-                is_packed=False,
-                criterion=torch.nn.BCEWithLogitsLoss(), 
-                task="multilabel", 
-                no_robust=True, 
-                additional_loss=True
-            )
-            
-            # Get branch selection stats
-            branch_stats = model.get_selection_stats()
-            
-            # Store results
-            noise_results.append({
-                'noise_level': level,
-                'f1_micro': test_results['f1_micro'],
-                'f1_macro': test_results['f1_macro'],
-                'branch_stats': branch_stats,
-                'fusion_ratio': model.weight_stat()
-            })
-            
-            print(f"  Level {level}: F1-micro = {test_results['f1_micro']:.4f}, F1-macro = {test_results['f1_macro']:.4f}")
-            print(f"  {branch_stats}")
-        
-        results[f'image_{noise_type}_intensity'] = noise_results
-    
-    # Test image noise with varying percentages (fixed intensity)
-    for noise_type in image_noise_types:
-        print(f"Testing {noise_type} noise on varying percentages of images...")
-        percentage_results = []
-        
-        # Use a medium noise level
-        if noise_type == 'gaussian':
-            params = {'std': 0.2}
-        elif noise_type == 'salt_pepper':
-            params = {'amount': 0.2}
-        elif noise_type == 'quality_reduction':
-            params = {'blur_factor': 0.2, 'noise_level': 0.1}
-        elif noise_type == 'masking':
-            params = {'mask_size': 0.2, 'num_masks': 3}
-        
-        for percentage in percentage_levels:
-            # Get test data with this noise configuration
-            _, _, test_loader = get_data_with_noise(
-                image_noise_type=noise_type,
-                image_noise_params=params,
-                image_noise_percentage=percentage,  # Vary the percentage
-                text_noise_percentage=0             # No text noise
-            )
-            
-            # Reset model stats
-            model.reset_weight()
-            model.reset_selection_stats()
-            
-            # Test the model
-            test_results = test(
-                model=model, 
-                test_dataloaders_all=test_loader, 
-                dataset="chestx", 
-                is_packed=False,
-                criterion=torch.nn.BCEWithLogitsLoss(), 
-                task="multilabel", 
-                no_robust=True, 
-                additional_loss=True
-            )
-            
-            # Get branch selection stats
-            branch_stats = model.get_selection_stats()
-            
-            # Store results
-            percentage_results.append({
-                'noise_percentage': percentage,
-                'f1_micro': test_results['f1_micro'],
-                'f1_macro': test_results['f1_macro'],
-                'branch_stats': branch_stats,
-                'fusion_ratio': model.weight_stat()
-            })
-            
-            print(f"  {percentage}% coverage: F1-micro = {test_results['f1_micro']:.4f}, F1-macro = {test_results['f1_macro']:.4f}")
-            print(f"  {branch_stats}")
-        
-        results[f'image_{noise_type}_percentage'] = percentage_results
-    
-    # Test text noise types with varying intensities
-    text_noise_types = ['dropout', 'swap', 'corruption']
-    for noise_type in text_noise_types:
-        print(f"Testing {noise_type} noise on text with varying intensities...")
-        noise_results = []
-        
-        for level in noise_levels:
-            # Configure noise parameters based on type
-            if noise_type == 'dropout':
-                params = {'dropout_prob': level}
-            elif noise_type == 'swap':
-                params = {'swap_prob': level}
-            elif noise_type == 'corruption':
-                params = {'corruption_prob': level}
-            
-            # Get test data with this noise configuration
-            _, _, test_loader = get_data_with_noise(
-                text_noise_type=noise_type,
-                text_noise_params=params,
-                image_noise_percentage=0,     # No image noise
-                text_noise_percentage=100     # Apply to all text
-            )
-            
-            # Reset model stats
-            model.reset_weight()
-            model.reset_selection_stats()
-            
-            # Test the model
-            test_results = test(
-                model=model, 
-                test_dataloaders_all=test_loader, 
-                dataset="chestx", 
-                is_packed=False,
-                criterion=torch.nn.BCEWithLogitsLoss(), 
-                task="multilabel", 
-                no_robust=True, 
-                additional_loss=True
-            )
-            
-            # Get branch selection stats
-            branch_stats = model.get_selection_stats()
-            
-            # Store results
-            noise_results.append({
-                'noise_level': level,
-                'f1_micro': test_results['f1_micro'],
-                'f1_macro': test_results['f1_macro'],
-                'branch_stats': branch_stats,
-                'fusion_ratio': model.weight_stat()
-            })
-            
-            print(f"  Level {level}: F1-micro = {test_results['f1_micro']:.4f}, F1-macro = {test_results['f1_macro']:.4f}")
-            print(f"  {branch_stats}")
-        
-        results[f'text_{noise_type}_intensity'] = noise_results
-    
-    # Test text noise with varying percentages
-    for noise_type in text_noise_types:
-        print(f"Testing {noise_type} noise on varying percentages of text...")
-        percentage_results = []
-        
-        # Use a medium noise level
-        if noise_type == 'dropout':
-            params = {'dropout_prob': 0.2}
-        elif noise_type == 'swap':
-            params = {'swap_prob': 0.2}
-        elif noise_type == 'corruption':
-            params = {'corruption_prob': 0.2}
-        
-        for percentage in percentage_levels:
-            # Get test data with this noise configuration
-            _, _, test_loader = get_data_with_noise(
-                text_noise_type=noise_type,
-                text_noise_params=params,
-                image_noise_percentage=0,           # No image noise
-                text_noise_percentage=percentage    # Vary the percentage
-            )
-            
-            # Reset model stats
-            model.reset_weight()
-            model.reset_selection_stats()
-            
-            # Test the model
-            test_results = test(
-                model=model, 
-                test_dataloaders_all=test_loader, 
-                dataset="chestx", 
-                is_packed=False,
-                criterion=torch.nn.BCEWithLogitsLoss(), 
-                task="multilabel", 
-                no_robust=True, 
-                additional_loss=True
-            )
-            
-            # Get branch selection stats
-            branch_stats = model.get_selection_stats()
-            
-            # Store results
-            percentage_results.append({
-                'noise_percentage': percentage,
-                'f1_micro': test_results['f1_micro'],
-                'f1_macro': test_results['f1_macro'],
-                'branch_stats': branch_stats,
-                'fusion_ratio': model.weight_stat()
-            })
-            
-            print(f"  {percentage}% coverage: F1-micro = {test_results['f1_micro']:.4f}, F1-macro = {test_results['f1_macro']:.4f}")
-            print(f"  {branch_stats}")
-        
-        results[f'text_{noise_type}_percentage'] = percentage_results
-    
-    #

@@ -8,7 +8,7 @@ import sys
 import os
 sys.path.append(os.getcwd())
 from chestx_utils import *
-from unimodals.common_models import MLP, Linear, MaxOut_MLP, ReportTransformer
+from unimodals.common_models import MLP, Linear, MaxOut_MLP, ReportTransformer, Transformer, Sequential, Identity
 from fusions.common_fusions import Concat
 from ModalityDynMM.training_structures_dynmm.Supervised_Learning import train, test, MMDL
 from noise import get_data_with_noise
@@ -34,37 +34,31 @@ class DynMMNet(nn.Module):
         super(DynMMNet, self).__init__()
         self.branch_num = branch_num
         self.dir = directory
-        self.image_preprocess = nn.Linear(196864, 4396)
         # branch 1: text network
         self.text_encoder = torch.load('./log/' + self.dir + 'model_text.pt') if pretrain else ReportTransformer(30522, 256, 256)
         self.text_head = torch.load('./log/' + self.dir + 'head_text.pt') if pretrain else MLP(256, 256, 14)
-        # self.branch1 = nn.Sequential(self.text_encoder, self.text_head)
 
-        # # branch2: image network, discard this branch due to poor performance
-        # self.image_encoder = torch.load('./log/' + self.dir + 'model_image.pt') if pretrain else VGG11Slim(256)
-        # self.image_head = torch.load('./log/' + self.dir + 'head_image.pt') if pretrain else MLP(256, 256, 14)
-        # self.branch2 = nn.Sequential(self.image_encoder, self.image_head)
+        #image network, used only for encoding in forward
+        self.image_encoder = torch.load('./log/' + self.dir + 'model_image.pt') if pretrain else ReportTransformer(30522, 256, 256)
+        self.image_head = torch.load('./log/' + self.dir + 'head_image.pt') if pretrain else MLP(256, 256, 14)
 
         # branch3: text+image late fusion
         if pretrain:
             self.branch3 = torch.load('./log/' + self.dir + 'best_lf.pt')
         else:
             encoders = [ReportTransformer(30522, 256, 256).cuda(), VGG11Slim(256).cuda()]
-            #     encoders = [MaxOut_MLP(512, 512, 300, linear_layer=False), MaxOut_MLP(512, 1024, 4096, 512, False)]
-            #     head = Linear(1024, 23)
             head= Linear(512, 14).cuda()
             fusion = Concat()
             self.branch3 = MMDL(encoders, fusion, head)
 
         if freeze:
+
             self.freeze_branch(self.text_encoder)
             self.freeze_branch(self.text_head)
-            # self.freeze_branch(self.image_encoder)
-            # self.freeze_branch(self.image_head)
             self.freeze_branch(self.branch3)
 
         # gating network
-        self.gate = MLP(3328, 256, branch_num)
+        self.gate = MLP(512, 256, branch_num)
         self.temp = 1
         self.hard_gate = True
         self.weight_list = torch.Tensor()
@@ -104,18 +98,12 @@ class DynMMNet(nn.Module):
         # Get batch size
         batch_size = text_input.size(0)
         
-        # Reduce image dimensions through pooling or resizing
-        # Option 1: Average pooling to reduce dimensions
-        reduced_image = F.adaptive_avg_pool2d(image_input, (32, 32))  # Reduce to 32x32
-        
-        # Option 2: Or alternatively, just resize directly
-        # reduced_image = F.interpolate(image_input, size=(32, 32), mode='bilinear', align_corners=False)
-        
-        # Flatten the reduced image
-        image_flattened = reduced_image.view(batch_size, -1)  # Now much smaller
+        image_features = self.image_encoder(inputs[1]) 
+
+        image_features = image_features.view(batch_size, -1) 
         
         # Concatenate
-        x = torch.cat([text_input, image_flattened], dim=1)
+        x = torch.cat([self.text_encoder(text_input), image_features], dim=1)
     
         weight = DiffSoftmax(self.gate(x), tau=self.temp, hard=self.hard_gate)
 
@@ -148,13 +136,11 @@ class DynMMNet(nn.Module):
         # Return output and average weight of fusion branch for monitoring
         return output, weight[:, 1].mean()
 
-    def forward_separate_branch(self, inputs, path, weight_enable):  # see separate branch performance
+    def forward_separate_branch(self, inputs, path, weight_enable):  
         if weight_enable:
             x = torch.cat(inputs, dim=1)
             weight = DiffSoftmax(self.gate(x), tau=self.temp, hard=self.hard_gate)
         if path == 1:
-            output = self.text_head(self.text_encoder(inputs[0]))
-        elif path == 2:
             output = self.branch3(inputs)
 
         return output
@@ -180,7 +166,7 @@ if __name__ == '__main__':
     argparser.add_argument("--n-epochs", type=int, default=50, help="number of epochs")
     argparser.add_argument("--lr", type=float, default=1e-4, help="learning rate")
     argparser.add_argument("--wd", type=float, default=1e-2, help="weight decay")
-    argparser.add_argument("--reg", type=float, default=0.1, help="reg loss weight")
+    argparser.add_argument("--reg", type=float, default=0.01, help="reg loss weight")
     argparser.add_argument("--freeze", action='store_true', help='freeze branch weights')
     argparser.add_argument("--eval-only", action='store_true', help='no training')
     argparser.add_argument("--hard", action='store_true', help='hard labels')
@@ -203,7 +189,7 @@ if __name__ == '__main__':
         train_data, val_data, test_data = get_data_with_noise(64, image_noise_type=args.image_noise_type, text_noise_type=args.text_noise_type,
         text_noise_percentage=args.text_noise_percentage, image_noise_percentage=args.image_noise_percentage)
     else:
-        train_data, val_data, test_data = get_data(16)
+        train_data, val_data, test_data = get_data(32)
     # Init Model
     model = DynMMNet(pretrain=1-args.no_pretrain, freeze=args.freeze, directory=args.dir)
     filename = os.path.join('./log', args.data, 'DynMMNet_freeze' + str(args.freeze) + '_reg_' + str(args.reg) + '.pt')
@@ -212,7 +198,7 @@ if __name__ == '__main__':
         model.hard_gate = args.hard
         train(None, None, None, train_data, val_data, args.n_epochs, task="multilabel", optimtype=torch.optim.AdamW,
                 is_packed=False, early_stop=True, lr=args.lr, save=filename, weight_decay=args.wd,
-                objective=torch.nn.BCEWithLogitsLoss(), moe_model=model, additional_loss=True, lossw=args.reg)
+                objective=torch.nn.BCEWithLogitsLoss(pos_weight=compute_pos_weights(train_data)), moe_model=model, additional_loss=True, lossw=args.reg)
 
     # Test
     print(f"Testing model {filename}:")
@@ -227,20 +213,10 @@ if __name__ == '__main__':
     print('-' * 30 + 'Test data' + '-' * 30)
     model.reset_weight()
     model.reset_selection_stats()
+    model.eval()
     tmp = test(model=model, test_dataloaders_all=test_data, dataset=args.data, is_packed=False,
                 criterion=torch.nn.BCEWithLogitsLoss(), task="multilabel", no_robust=True, additional_loss=True)
     print(model.get_selection_stats())
-    log1.append(model.weight_stat())
-    log2.append(tmp['f1_micro'], tmp['f1_macro'], model.cal_flop())
+    print(model.weight_stat())
+    print(tmp['f1_micro'], tmp['f1_macro'], model.cal_flop())
 
-    print(log1)
-    print(log2)
-    print('-' * 60)
-    print(f'Finish {args.n_runs} runs')
-    # print(f'Val f1 micro {np.mean(log1[:, 0]) * 100:.2f} ± {np.std(log1[:, 0]) * 100:.2f} | f1 macro {np.mean(log1[:, 1]) * 100:.2f} ± {np.std(log1[:, 0]) * 100:.2f}')
-    print(f'Test f1 micro {np.mean(log2[:, 0]) * 100:.2f} ± {np.std(log2[:, 0]) * 100:.2f} | '
-          f'f1 macro {np.mean(log2[:, 1]) * 100:.2f} ± {np.std(log2[:, 0]) * 100:.2f} | ' 
-          f'Flop saving {np.mean(log2[:, 2]):.2f} ± {np.std(log2[:, 2]):.2f}M | '
-          f'Branch selection ratio {np.mean(log1):.3f} ± {np.std(log1):.3f}')
-    idx = np.argmax(log2[:, 1])
-    print('Best result', log2[idx, :])

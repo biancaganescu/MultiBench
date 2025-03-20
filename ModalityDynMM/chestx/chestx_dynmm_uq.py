@@ -11,7 +11,7 @@ from chestx_utils import *
 from unimodals.common_models import MLP, Linear, MaxOut_MLP
 from fusions.common_fusions import Concat
 from ModalityDynMM.training_structures_dynmm.Supervised_Learning import train, test, MMDL
-
+from noise import *
 
 def DiffSoftmax(logits, tau=1.0, hard=False, dim=-1):
     y_soft = (logits / tau).softmax(dim)
@@ -53,7 +53,7 @@ class LightTransformerBlock(nn.Module):
 
 class QualityAssessor(nn.Module):
     """Quality assessment module using lightweight transformer"""
-    def __init__(self, input_dim, hidden_dim=128, num_heads=2, depth=1):
+    def __init__(self, input_dim, hidden_dim=256, num_heads=2, depth=1):
         super(QualityAssessor, self).__init__()
         
         # Project input to hidden dimension
@@ -95,7 +95,7 @@ class QualityAssessor(nn.Module):
 
 class UncertaintyEstimator(nn.Module):
     """Uncertainty estimation using lightweight transformer"""
-    def __init__(self, feature_dim, hidden_dim=128, num_heads=2, depth=1):
+    def __init__(self, feature_dim, hidden_dim=256, num_heads=2, depth=1):
         super(UncertaintyEstimator, self).__init__()
         
         # Project input to hidden dimension
@@ -143,12 +143,15 @@ class DynMMNet(nn.Module):
         super(DynMMNet, self).__init__()
         self.branch_num = branch_num
         self.dir = directory
-        self.image_preprocess = nn.Linear(196864, 4396)
         
         # branch 1: text network
         self.text_encoder = torch.load('./log/' + self.dir + 'model_text.pt') if pretrain else MLP(256, 256, 256)
         self.text_head = torch.load('./log/' + self.dir + 'head_text.pt') if pretrain else MLP(256, 256, 14)
         
+        #image network, used only for encoding in forward
+        self.image_encoder = torch.load('./log/' + self.dir + 'model_image.pt') if pretrain else ReportTransformer(30522, 256, 256)
+        self.image_head = torch.load('./log/' + self.dir + 'head_image.pt') if pretrain else MLP(256, 256, 14)
+
         # branch2: late fusion of text+image
         if pretrain:
             self.branch2 = torch.load('./log/' + self.dir + 'best_lf.pt')
@@ -160,7 +163,7 @@ class DynMMNet(nn.Module):
 
         # Quality assessment modules
         self.text_quality = QualityAssessor(256)  # Assumes text feature dimension is 256
-        self.image_quality = QualityAssessor(3072)  # For flattened 32x32x3 images
+        self.image_quality = QualityAssessor(256) 
         
         # Uncertainty estimators
         self.text_uncertainty = UncertaintyEstimator(256)
@@ -168,7 +171,7 @@ class DynMMNet(nn.Module):
         
         # Enhanced gating network with quality and uncertainty inputs using a lightweight transformer
         # Input: text features, image features, quality scores, uncertainty estimates
-        self.gate_input_dim = 3328 + 4  # +4 for 2 quality scores and 2 uncertainty scores
+        self.gate_input_dim = 516  # +4 for 2 quality scores and 2 uncertainty scores
         self.gate_hidden_dim = 256
         
         # Input projection for gating network
@@ -185,7 +188,7 @@ class DynMMNet(nn.Module):
         self.weight_list = torch.Tensor()
         self.store_weight = False
         self.infer_mode = 0
-        self.flop = torch.Tensor([0.400384, 119644.54])
+        self.flop = torch.Tensor([2.18538, 21.82964])
         
         # Hyperparameter for resource penalty
         self.lambda_resource = 0.1
@@ -222,30 +225,30 @@ class DynMMNet(nn.Module):
         # Get batch size
         batch_size = text_input.size(0)
         
-        # Reduce image dimensions through pooling or resizing
-        reduced_image = F.adaptive_avg_pool2d(image_input, (32, 32))  # Reduce to 32x32
-        image_flattened = reduced_image.view(batch_size, -1)  # Now much smaller
+        image_features = self.image_encoder(inputs[1]) 
+
+        image_features = image_features.view(batch_size, -1) 
         
         # Get text features for quality assessment
         text_features = self.text_encoder(text_input)
         
         # Assess quality for each modality
         text_quality = self.text_quality(text_features)
-        image_quality = self.image_quality(image_flattened)
+        image_quality = self.image_quality(image_features)
         
         # Estimate uncertainty for each expert
         text_uncertainty = self.text_uncertainty(text_features)
         
         # For fusion uncertainty, we need features from both modalities
         # We can use a simple concatenation of features
-        fusion_features = torch.cat([text_features, image_flattened[:, :256]], dim=1)
+        fusion_features = torch.cat([text_features, image_features], dim=1)
         fusion_uncertainty = self.fusion_uncertainty(fusion_features)
         
         # Concatenate all inputs for the gating network
         # Original inputs + quality scores + uncertainty estimates
         x = torch.cat([
             text_input, 
-            image_flattened, 
+            image_features, 
             text_quality, 
             image_quality, 
             text_uncertainty, 
@@ -263,17 +266,6 @@ class DynMMNet(nn.Module):
         if self.store_weight:
             self.weight_list = torch.cat((self.weight_list, weight.cpu()))
         
-        if self.hard_gate:
-            # Get the index of the maximum weight for each sample in the batch
-            selected_branches = torch.argmax(weight, dim=1)
-            
-            # Count selections for each branch
-            for i in range(self.branch_num):
-                self.branch_selections[i] += (selected_branches == i).sum().item()
-            
-            # Track total number of samples
-            self.total_samples += weight.size(0)
-
         # Get predictions from both branches
         pred_list = [
             self.text_head(text_features),                 # Branch 1: Text only
@@ -289,51 +281,6 @@ class DynMMNet(nn.Module):
                 
         # Return output and average weight of fusion branch for monitoring
         return output, weight[:, 1].mean()
-
-    def forward_separate_branch(self, inputs, path, weight_enable):  # see separate branch performance
-        text_input = inputs[0]
-        image_input = inputs[1]
-        
-        # Get batch size
-        batch_size = text_input.size(0)
-        
-        # Reduce image dimensions
-        reduced_image = F.adaptive_avg_pool2d(image_input, (32, 32))
-        image_flattened = reduced_image.view(batch_size, -1)
-        
-        # Get text features
-        text_features = self.text_encoder(text_input)
-        
-        # Quality and uncertainty assessment
-        text_quality = self.text_quality(text_features)
-        image_quality = self.image_quality(image_flattened)
-        text_uncertainty = self.text_uncertainty(text_features)
-        fusion_features = torch.cat([text_features, image_flattened[:, :256]], dim=1)
-        fusion_uncertainty = self.fusion_uncertainty(fusion_features)
-        
-        if weight_enable:
-            x = torch.cat([
-                text_input, 
-                image_flattened, 
-                text_quality, 
-                image_quality, 
-                text_uncertainty, 
-                fusion_uncertainty
-            ], dim=1)
-            
-            # Process through the transformer-based gating network
-            gate_input = self.gate_input_proj(x).unsqueeze(1)
-            gate_features = self.gate_transformer(gate_input).squeeze(1)
-            gate_logits = self.gate_output(gate_features)
-            
-            weight = DiffSoftmax(gate_logits, tau=self.temp, hard=self.hard_gate)
-        
-        if path == 1:
-            output = self.text_head(text_features)
-        elif path == 2:
-            output = self.branch2(inputs)
-
-        return output
 
     def get_selection_stats(self):
         if self.total_samples == 0:
@@ -387,13 +334,20 @@ if __name__ == '__main__':
     argparser.add_argument("--n-epochs", type=int, default=50, help="number of epochs")
     argparser.add_argument("--lr", type=float, default=1e-4, help="learning rate")
     argparser.add_argument("--wd", type=float, default=1e-2, help="weight decay")
-    argparser.add_argument("--reg", type=float, default=0.1, help="reg loss weight")
+    argparser.add_argument("--reg", type=float, default=0.01, help="reg loss weight")
     argparser.add_argument("--freeze", action='store_true', help='freeze branch weights')
     argparser.add_argument("--eval-only", action='store_true', help='no training')
     argparser.add_argument("--hard", action='store_true', help='hard labels')
     argparser.add_argument("--no-pretrain", action='store_true', help='train from scratch')
     argparser.add_argument("--infer-mode", type=int, default=0, help="infer mode")
     argparser.add_argument("--balanced", action='store_true', help='balanced dataset')
+    argparser.add_argument("--noise", action='store_true', help='noisy dataset')
+    argparser.add_argument("--text_noise_type", default=None, help='text noise dataset')
+    argparser.add_argument("--image_noise_type", default=None, help='text noise type')
+    argparser.add_argument("--text_noise_percentage", type=int, default=100, help='text noise dataset')
+    argparser.add_argument("--image_noise_percentage", type=int, default=100, help='text noise type')
+    argparser.add_argument("--dir", default='chestx/', help='folder to store results')
+    
     # Add new arguments for quality-aware features
     argparser.add_argument("--lambda-resource", type=float, default=0.1, help="resource penalty weight")
 
@@ -401,46 +355,49 @@ if __name__ == '__main__':
 
     os.environ['CUDA_VISIBLE_DEVICES'] = str(args.gpu)
     
-    if args.balanced:
-        train_data, val_data, test_data = get_data(64)
-        # Init Model
-        model = DynMMNet(pretrain=1-args.no_pretrain, freeze=args.freeze)
-        model.lambda_resource = args.lambda_resource
-        filename = os.path.join('./log', args.data, 'QualityAwareDynMMNet_freeze' + str(args.freeze) + '_reg_' + str(args.reg) + '_lambda_' + str(args.lambda_resource) + '.pt')
+    if args.noise:
+        train_data, val_data, test_data = get_data_with_noise(64, image_noise_type=args.image_noise_type, text_noise_type=args.text_noise_type,
+        text_noise_percentage=args.text_noise_percentage, image_noise_percentage=args.image_noise_percentage)
+    else:
+        train_data, val_data, test_data = get_data(32)
+    # Init Model
+    model = DynMMNet(pretrain=1-args.no_pretrain, freeze=args.freeze)
+    model.lambda_resource = args.lambda_resource
+    filename = os.path.join('./log', args.data, 'QualityAwareDynMMNet_freeze' + str(args.freeze) + '_reg_' + str(args.reg) + '_lambda_' + str(args.lambda_resource) + '.pt')
 
-        if not args.eval_only:
-            model.hard_gate = args.hard
-            train(None, None, None, train_data, val_data, args.n_epochs, task="multilabel", optimtype=torch.optim.AdamW,
-                  is_packed=False, early_stop=True, lr=args.lr, save=filename, weight_decay=args.wd,
-                  objective=torch.nn.BCEWithLogitsLoss(), moe_model=model, additional_loss=True, lossw=args.reg)
+    if not args.eval_only:
+        model.hard_gate = args.hard
+        train(None, None, None, train_data, val_data, args.n_epochs, task="multilabel", optimtype=torch.optim.AdamW,
+                is_packed=False, early_stop=True, lr=args.lr, save=filename, weight_decay=args.wd,
+                objective=torch.nn.BCEWithLogitsLoss(), moe_model=model, additional_loss=True, lossw=args.reg)
 
-        # Test
-        print(f"Testing model {filename}:")
-        model = torch.load(filename).cuda()
-        model.hard_gate = True
+    # Test
+    print(f"Testing model {filename}:")
+    model = torch.load(filename).cuda()
+    model.hard_gate = True
 
-        # print('-' * 30 + 'Val data' + '-' * 30)
-        model.infer_mode = args.infer_mode
-        # tmp = test(model=model, test_dataloaders_all=validdata, dataset=args.data, is_packed=False,
-        #            criterion=torch.nn.BCEWithLogitsLoss(), task="multilabel", no_robust=True, additional_loss=True)
+    # print('-' * 30 + 'Val data' + '-' * 30)
+    model.infer_mode = args.infer_mode
+    # tmp = test(model=model, test_dataloaders_all=validdata, dataset=args.data, is_packed=False,
+    #            criterion=torch.nn.BCEWithLogitsLoss(), task="multilabel", no_robust=True, additional_loss=True)
 
-        print('-' * 30 + 'Test data' + '-' * 30)
-        model.reset_weight()
-        model.reset_selection_stats()
-        tmp = test(model=model, test_dataloaders_all=test_data, dataset=args.data, is_packed=False,
-                   criterion=torch.nn.BCEWithLogitsLoss(), task="multilabel", no_robust=True, additional_loss=True)
-        print(model.get_selection_stats())
-        log1.append(model.weight_stat())
-        log2.append(tmp['f1_micro'], tmp['f1_macro'], model.cal_flop())
+    print('-' * 30 + 'Test data' + '-' * 30)
+    model.reset_weight()
+    model.reset_selection_stats()
+    tmp = test(model=model, test_dataloaders_all=test_data, dataset=args.data, is_packed=False,
+                criterion=torch.nn.BCEWithLogitsLoss(), task="multilabel", no_robust=True, additional_loss=True)
+    print(model.get_selection_stats())
+    log1.append(model.weight_stat())
+    log2.append(tmp['f1_micro'], tmp['f1_macro'], model.cal_flop())
 
-    print(log1)
-    print(log2)
-    print('-' * 60)
-    print(f'Finish {args.n_runs} runs')
-    # print(f'Val f1 micro {np.mean(log1[:, 0]) * 100:.2f} ± {np.std(log1[:, 0]) * 100:.2f} | f1 macro {np.mean(log1[:, 1]) * 100:.2f} ± {np.std(log1[:, 0]) * 100:.2f}')
-    print(f'Test f1 micro {np.mean(log2[:, 0]) * 100:.2f} ± {np.std(log2[:, 0]) * 100:.2f} | '
-          f'f1 macro {np.mean(log2[:, 1]) * 100:.2f} ± {np.std(log2[:, 0]) * 100:.2f} | ' 
-          f'Flop saving {np.mean(log2[:, 2]):.2f} ± {np.std(log2[:, 2]):.2f}M | '
-          f'Branch selection ratio {np.mean(log1):.3f} ± {np.std(log1):.3f}')
-    idx = np.argmax(log2[:, 1])
-    print('Best result', log2[idx, :])
+print(log1)
+print(log2)
+print('-' * 60)
+print(f'Finish {args.n_runs} runs')
+# print(f'Val f1 micro {np.mean(log1[:, 0]) * 100:.2f} ± {np.std(log1[:, 0]) * 100:.2f} | f1 macro {np.mean(log1[:, 1]) * 100:.2f} ± {np.std(log1[:, 0]) * 100:.2f}')
+print(f'Test f1 micro {np.mean(log2[:, 0]) * 100:.2f} ± {np.std(log2[:, 0]) * 100:.2f} | '
+        f'f1 macro {np.mean(log2[:, 1]) * 100:.2f} ± {np.std(log2[:, 0]) * 100:.2f} | ' 
+        f'Flop saving {np.mean(log2[:, 2]):.2f} ± {np.std(log2[:, 2]):.2f}M | '
+        f'Branch selection ratio {np.mean(log1):.3f} ± {np.std(log1):.3f}')
+idx = np.argmax(log2[:, 1])
+print('Best result', log2[idx, :])
