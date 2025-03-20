@@ -12,6 +12,7 @@ from unimodals.common_models import MLP, Linear, MaxOut_MLP, ReportTransformer, 
 from fusions.common_fusions import Concat
 from ModalityDynMM.training_structures_dynmm.Supervised_Learning import train, test, MMDL
 from noise import get_noisy_data_loaders
+from train_uq_loss import *
 
 def DiffSoftmax(logits, tau=1.0, hard=False, dim=-1):
     y_soft = (logits / tau).softmax(dim)
@@ -26,6 +27,34 @@ def DiffSoftmax(logits, tau=1.0, hard=False, dim=-1):
     return ret
 
 
+class QualityAssessor(nn.Module):
+    def __init__(self, input_dim, hidden_dim=128):
+        super(QualityAssessor, self).__init__()
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_dim, 1),
+            nn.Sigmoid()
+        )
+        
+    def forward(self, x):
+        return self.net(x)
+
+class UncertaintyEstimator(nn.Module):
+    def __init__(self, feature_dim, hidden_dim=128):
+        super(UncertaintyEstimator, self).__init__()
+        self.net = nn.Sequential(
+            nn.Linear(feature_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_dim, 1),
+            nn.Sigmoid()
+        )
+        
+    def forward(self, features):
+        return self.net(features)
+
 class DynMMNet(nn.Module):
     def __init__(self, branch_num=2, pretrain=True, freeze=True, directory = "chestx/"):
          # Add branch selection counters
@@ -34,6 +63,12 @@ class DynMMNet(nn.Module):
         super(DynMMNet, self).__init__()
         self.branch_num = branch_num
         self.dir = directory
+
+        # Initialize attributes for quality-uncertainty weighted loss
+        self.batch_quality_scores = None
+        self.batch_uncertainty_scores = None
+        self.batch_branch_weights = None
+
         # branch 1: text network
         self.text_encoder = torch.load('./log/' + self.dir + 'model_text.pt') if pretrain else ReportTransformer(30522, 256, 256)
         self.text_head = torch.load('./log/' + self.dir + 'head_text.pt') if pretrain else MLP(256, 256, 14)
@@ -51,6 +86,12 @@ class DynMMNet(nn.Module):
             fusion = Concat()
             self.branch3 = MMDL(encoders, fusion, head)
 
+        self.text_quality = QualityAssessor(256)
+        self.image_quality = QualityAssessor(256)
+
+        self.text_uncertainty = UncertaintyEstimator(256)
+        self.fusion_uncertainty = UncertaintyEstimator(512)
+
         if freeze:
 
             self.freeze_branch(self.text_encoder)
@@ -58,7 +99,7 @@ class DynMMNet(nn.Module):
             self.freeze_branch(self.branch3)
 
         # gating network
-        self.gate = MLP(512, 256, branch_num)
+        self.gate = MLP(516, 256, branch_num)
         self.temp = 1
         self.hard_gate = True
         self.weight_list = torch.Tensor()
@@ -91,21 +132,61 @@ class DynMMNet(nn.Module):
         return total_flop.item()
 
     def forward(self, inputs):
-        text_input = inputs[0]  # Shape: [batch, seq]
-        image_input = inputs[1]  # Shape: [batch, h, w, c]
-        
-        # Get batch size
+        text_input = inputs[0]
         batch_size = text_input.size(0)
         
-        image_features = self.image_encoder(inputs[1]) 
-
-        image_features = image_features.view(batch_size, -1) 
+        # Get features
+        text_features = self.text_encoder(text_input)
+        image_features = self.image_encoder(inputs[1]).view(batch_size, -1)
         
-        # Concatenate
-        x = torch.cat([self.text_encoder(text_input), image_features], dim=1)
+        # Quality assessment
+        text_quality = self.text_quality(text_features)
+        image_quality = self.image_quality(image_features)
+        
+        # Get uncertainty estimates
+        text_uncertainty = self.text_uncertainty(text_features)
+        fusion_features = torch.cat([text_features, image_features], dim=1)
+        fusion_uncertainty = self.fusion_uncertainty(fusion_features)
+        
+        # Quality-weighted features
+        text_quality_expanded = text_quality.expand_as(text_features)
+        image_quality_expanded = image_quality.expand_as(image_features)
+        weighted_text_features = text_features * text_quality_expanded
+        weighted_image_features = image_features * image_quality_expanded
+        
+        # Apply inverse uncertainty weighting to text features
+        text_confidence = 1.0 - text_uncertainty
+        text_confidence_expanded = text_confidence.expand_as(text_features)
+        weighted_text_features = weighted_text_features * text_confidence_expanded
+        
+        # Apply inverse fusion uncertainty to weighted image features
+        # This reflects the idea that high fusion uncertainty should reduce reliance on complex features
+        fusion_confidence = 1.0 - fusion_uncertainty
+        fusion_confidence_expanded = fusion_confidence.expand_as(image_features)
+        weighted_image_features = weighted_image_features * fusion_confidence_expanded
+        
+        # Combined weighted features for fusion
+        combined_features = torch.cat([weighted_text_features, weighted_image_features], dim=1)
+        
+        # TODO: experiment with keeping text quality and uncertainty
+        # Gate input with quality and uncertainty information
+        x = torch.cat([
+            weighted_text_features,
+            weighted_image_features,
+            text_quality,
+            image_quality,
+            text_uncertainty,
+            fusion_uncertainty
+        ], dim=1)
+    
     
         weight = DiffSoftmax(self.gate(x), tau=self.temp, hard=self.hard_gate)
 
+         # Store values for adaptive loss calculation
+        self.batch_quality_scores = (text_quality + image_quality) / 2.0  # Average quality
+        self.batch_uncertainty_scores = (text_uncertainty + fusion_uncertainty) / 2.0  # Average uncertainty
+        self.batch_branch_weights = weight  # Branch selection weights
+        
         if self.store_weight:
             self.weight_list = torch.cat((self.weight_list, weight.cpu()))
         
@@ -179,12 +260,12 @@ if __name__ == '__main__':
     argparser.add_argument("--text_noise_percentage", type=int, default=100, help='text noise dataset')
     argparser.add_argument("--image_noise_percentage", type=int, default=100, help='text noise type')
     argparser.add_argument("--dir", default='chestx/', help='folder to store results')
-    
+    argparser.add_argument("--uq_loss", action='store_true', help='uncertainy + quality loss')
+   
 
     args = argparser.parse_args()
 
     os.environ['CUDA_VISIBLE_DEVICES'] = str(args.gpu)
-    
     
     if args.noise and not args.eval_only:
         train_data, val_data, test_data = get_noisy_data_loaders()
@@ -194,11 +275,15 @@ if __name__ == '__main__':
         train_data, val_data, test_data = get_data(32)
     # Init Model
     model = DynMMNet(pretrain=1-args.no_pretrain, freeze=args.freeze, directory=args.dir)
-    filename = os.path.join('./log', args.data, 'DynMMNet_freeze' + str(args.freeze) + '_reg_' + str(args.reg) + '.pt')
+    filename = os.path.join('./log', args.data, 'DynMMNet_freeze_uq' + str(args.freeze) + '_reg_' + str(args.reg) + "uq_loss" + str(args.uq_loss) + '.pt')
 
     if not args.eval_only:
         model.hard_gate = args.hard
-        train(None, None, None, train_data, val_data, args.n_epochs, task="multilabel", optimtype=torch.optim.AdamW,
+        if args.uq_loss:
+            train_dynmm_multilabel(train_data, val_data, model, args.n_epochs,lr=args.lr, weight_decay=args.wd, early_stop=True,
+            objective=torch.nn.BCEWithLogitsLoss(compute_pos_weights(train_data)), save=filename, lambda_weight=args.reg)
+        else:
+            train(None, None, None, train_data, val_data, args.n_epochs, task="multilabel", optimtype=torch.optim.AdamW,
                 is_packed=False, early_stop=True, lr=args.lr, save=filename, weight_decay=args.wd,
                 objective=torch.nn.BCEWithLogitsLoss(pos_weight=compute_pos_weights(train_data)), moe_model=model, additional_loss=True, lossw=args.reg)
 
@@ -216,7 +301,10 @@ if __name__ == '__main__':
     model.reset_weight()
     model.reset_selection_stats()
     model.eval()
-    tmp = test(model=model, test_dataloaders_all=test_data, dataset=args.data, is_packed=False,
+    if args.uq_loss:
+        print(test_dynmm_multilabel(model, test_data, objective=torch.nn.BCEWithLogitsLoss(pos_weight=compute_pos_weights(test_data))))
+    else:
+         tmp = test(model=model, test_dataloaders_all=test_data, dataset=args.data, is_packed=False,
                 criterion=torch.nn.BCEWithLogitsLoss(pos_weight=compute_pos_weights(test_data)), task="multilabel", no_robust=True, additional_loss=True)
     print(model.get_selection_stats())
     print(model.weight_stat())
