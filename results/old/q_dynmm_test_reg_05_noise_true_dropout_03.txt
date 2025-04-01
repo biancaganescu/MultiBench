@@ -1,0 +1,13 @@
+Loaded split indices from split_indices.pth
+Creating noisy data loaders with consistent indices
+Testing model ./log/test_chestx/DynMMNet_freeze_qTrue_reg_0.05_noise_None.pt:
+------------------------------Test data------------------------------
+f1_micro: 86.29 | f1_macro: 66.70
+Branch selection statistics:
+Branch 1: selected 203.0 times (55.01% of samples)
+Branch 2: selected 166.0 times (44.99% of samples)
+
+mean branch weight 0.5501, 0.4499
+0.4498645067214966
+Total Flops 11.02M
+0.8629254829806807 0.6669696485317228 11.022635459899902

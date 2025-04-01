@@ -162,7 +162,7 @@ def get_noise_indices(dataset_size, batch_size, config, split_name, seed=42):
             batch_noise_indices = json.load(f)
         print(f"Loaded existing noise indices for {split_name} split from {indices_path}")
         return batch_noise_indices
-    
+
     image_noise_percentage = config.get("image_noise_percentage", 0)
     text_noise_percentage = config.get("text_noise_percentage", 0)
     
@@ -310,14 +310,14 @@ def get_noisy_data_loaders(
     batch_size=32,
     num_workers=4,
     apply_to_train=True,
-    apply_to_val=False,
-    apply_to_test=False,
+    apply_to_val=True,
+    apply_to_test=True,
     max_seq_length=256,
     noise_seed=42
 ):
     random.seed(10)
     torch.manual_seed(10)
-    config_to_use = corruption_config
+    config_to_use = CORRUPTIONS[corruption_config]
     
     from mm_health_bench.mmhb.loader import ChestXDataset
     from mm_health_bench.mmhb.utils import Config
@@ -477,7 +477,7 @@ CORRUPTIONS = { "gaussian_25": {
             "text_noise_type": None,
             "image_noise_params": {"blur_factor": 3},
             "text_noise_params": None,
-            "image_noise_percentage": 100,
+            "image_noise_percentage":  50,
             "text_noise_percentage": 0
         },
         "blur_5": {
@@ -505,7 +505,7 @@ CORRUPTIONS = { "gaussian_25": {
             "text_noise_type": None,
             "image_noise_params": {"mask_size": 0.1, "num_masks": 2},
             "text_noise_params": None,
-            "image_noise_percentage": 100,
+            "image_noise_percentage":  50,
             "text_noise_percentage": 0
         },
         "mask_02_3": {
@@ -567,7 +567,7 @@ CORRUPTIONS = { "gaussian_25": {
             "image_noise_type": None,
             "text_noise_type": "swap",
             "image_noise_params": None,
-            "text_noise_params": {"dropout_prob": 0.5},
+            "text_noise_params": {"swap_prob": 0.5},
             "image_noise_percentage": 0,
             "text_noise_percentage": 100
         },

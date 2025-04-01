@@ -1,0 +1,57 @@
+Loaded split indices from split_indices.pth
+mean branch weight 0.4438, 0.5562
+--------------------------------------------------
+Epoch 0 | Train loss 0.0471 | Train CE loss 0.0182 | Val loss 0.2139 | patience 0
+f1 micro: 0.897 | f1 macro: 0.703 
+Saving Best
+mean branch weight 0.5250, 0.4750
+--------------------------------------------------
+Epoch 1 | Train loss 0.0430 | Train CE loss 0.0166 | Val loss 0.2105 | patience 0
+f1 micro: 0.897 | f1 macro: 0.706 
+Saving Best
+mean branch weight 0.5412, 0.4588
+--------------------------------------------------
+Epoch 2 | Train loss 0.0399 | Train CE loss 0.0157 | Val loss 0.2117 | patience 0
+f1 micro: 0.897 | f1 macro: 0.706 
+mean branch weight 0.5103, 0.4897
+--------------------------------------------------
+Epoch 3 | Train loss 0.0394 | Train CE loss 0.0161 | Val loss 0.2181 | patience 1
+f1 micro: 0.896 | f1 macro: 0.706 
+mean branch weight 0.5248, 0.4752
+--------------------------------------------------
+Epoch 4 | Train loss 0.0382 | Train CE loss 0.0157 | Val loss 0.2184 | patience 2
+f1 micro: 0.897 | f1 macro: 0.706 
+mean branch weight 0.5469, 0.4531
+--------------------------------------------------
+Epoch 5 | Train loss 0.0380 | Train CE loss 0.0160 | Val loss 0.2149 | patience 3
+f1 micro: 0.896 | f1 macro: 0.706 
+mean branch weight 0.5206, 0.4794
+--------------------------------------------------
+Epoch 6 | Train loss 0.0377 | Train CE loss 0.0157 | Val loss 0.2186 | patience 4
+f1 micro: 0.893 | f1 macro: 0.696 
+mean branch weight 0.5398, 0.4602
+--------------------------------------------------
+Epoch 7 | Train loss 0.0378 | Train CE loss 0.0160 | Val loss 0.2182 | patience 5
+f1 micro: 0.896 | f1 macro: 0.706 
+mean branch weight 0.5578, 0.4422
+--------------------------------------------------
+Epoch 8 | Train loss 0.0376 | Train CE loss 0.0157 | Val loss 0.2140 | patience 6
+f1 micro: 0.894 | f1 macro: 0.696 
+mean branch weight 0.5420, 0.4580
+--------------------------------------------------
+Epoch 9 | Train loss 0.0375 | Train CE loss 0.0159 | Val loss 0.2174 | patience 7
+f1 micro: 0.896 | f1 macro: 0.706 
+Training Time: 176.20371055603027
+Training Peak Mem: 2883.09375
+Training Params: 57920814
+Testing model ./log/test_chestx/DynMMNet_freeze_qTrue_reg_0.05_noise_None.pt:
+------------------------------Test data------------------------------
+f1_micro: 86.29 | f1_macro: 66.70
+Branch selection statistics:
+Branch 1: selected 203.0 times (55.01% of samples)
+Branch 2: selected 166.0 times (44.99% of samples)
+
+mean branch weight 0.5501, 0.4499
+0.4498645067214966
+Total Flops 11.02M
+0.8629254829806807 0.6669696485317228 11.022635459899902

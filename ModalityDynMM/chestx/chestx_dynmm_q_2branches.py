@@ -130,6 +130,8 @@ class DynMMNet(nn.Module):
         # Concatenate
         x = torch.cat([weighted_text_features, text_quality, weighted_image_features, image_quality], dim=1)
     
+        layer_norm = nn.LayerNorm(x.size()[1:]).to(x.device)
+        x = layer_norm(x)
         weight = DiffSoftmax(self.gate(x), tau=self.temp, hard=self.hard_gate)
 
         if self.store_weight:
@@ -207,14 +209,14 @@ if __name__ == '__main__':
     os.environ['CUDA_VISIBLE_DEVICES'] = str(args.gpu)
     
     if args.noise and not args.eval_only:
-        train_data, val_data, test_data = get_noisy_data_loaders(corruption_config=args.noise_config)
+        train_data, val_data, test_data = get_noisy_data_loaders(corruption_config=args.noise_config, batch_size=64)
     elif args.noise and args.eval_only:
-        get_noisy_data_loaders(corruption_config=args.noise_config, load_train=False, load_val=False)
+        _, _, test_data = get_noisy_data_loaders(corruption_config=args.noise_config, apply_to_train=False, apply_to_val=False, batch_size=64)
     else:
-        train_data, val_data, test_data = get_data(32)
+        train_data, val_data, test_data = get_data(64)
     # Init Model
     model = DynMMNet(pretrain=1-args.no_pretrain, freeze=args.freeze, directory=args.dir)
-    filename = os.path.join('./log', args.data, 'DynMMNet_freeze_uq' + str(args.freeze) + '_reg_' + str(args.reg) + '_noise_' + str(args.noise_config) + '.pt')
+    filename = os.path.join('./log', args.dir, 'DynMMNet_freeze_q' + str(args.freeze) + '_reg_' + str(args.reg) + '_noise_' + str(args.noise_config) + '.pt')
 
     if not args.eval_only:
         model.hard_gate = args.hard

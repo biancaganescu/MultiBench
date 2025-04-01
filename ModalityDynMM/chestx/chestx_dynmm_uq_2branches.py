@@ -56,7 +56,7 @@ class UncertaintyEstimator(nn.Module):
         return self.net(features)
 
 class DynMMNet(nn.Module):
-    def __init__(self, branch_num=2, pretrain=True, freeze=True, directory = "chestx/"):
+    def __init__(self, branch_num=2, pretrain=True, freeze=True, directory = "test_chestx/"):
          # Add branch selection counters
         self.branch_selections = torch.zeros(branch_num)
         self.total_samples = 0
@@ -170,16 +170,18 @@ class DynMMNet(nn.Module):
         
         # TODO: experiment with keeping text quality and uncertainty
         # Gate input with quality and uncertainty information
+        scaling_factor = 1
         x = torch.cat([
             weighted_text_features,
             weighted_image_features,
             text_quality,
             image_quality,
-            text_uncertainty,
-            fusion_uncertainty
+            text_uncertainty * scaling_factor,
+            fusion_uncertainty * scaling_factor
         ], dim=1)
     
-    
+        layer_norm = nn.LayerNorm(x.size()[1:]).to(x.device)
+        x = layer_norm(x)
         weight = DiffSoftmax(self.gate(x), tau=self.temp, hard=self.hard_gate)
 
          # Store values for adaptive loss calculation
@@ -243,8 +245,8 @@ if __name__ == '__main__':
     argparser.add_argument("--gpu", type=int, default=0, help="which gpu to use")
     argparser.add_argument("--n-runs", type=int, default=1, help="number of runs")
     argparser.add_argument("--data", type=str, default='chestx', help="dataset name")
-    argparser.add_argument("--n-epochs", type=int, default=50, help="number of epochs")
-    argparser.add_argument("--lr", type=float, default=1e-4, help="learning rate")
+    argparser.add_argument("--n-epochs", type=int, default=5, help="number of epochs")
+    argparser.add_argument("--lr", type=float, default=1e-5, help="learning rate")
     argparser.add_argument("--wd", type=float, default=1e-2, help="weight decay")
     argparser.add_argument("--reg", type=float, default=0.1, help="reg loss weight")
     argparser.add_argument("--freeze", action='store_true', help='freeze branch weights')
@@ -266,12 +268,12 @@ if __name__ == '__main__':
     if args.noise and not args.eval_only:
         train_data, val_data, test_data = get_noisy_data_loaders(corruption_config=args.noise_config)
     elif args.noise and args.eval_only:
-        get_noisy_data_loaders(corruption_config=args.noise_config, load_train=False, load_val=False)
+        _, _, test_data = get_noisy_data_loaders(corruption_config=args.noise_config, apply_to_train=False, apply_to_val=False)
     else:
-        train_data, val_data, test_data = get_data(32)
+        train_data, val_data, test_data = get_data(64)
     # Init Model
     model = DynMMNet(pretrain=1-args.no_pretrain, freeze=args.freeze, directory=args.dir)
-    filename = os.path.join('./log', args.data, 'DynMMNet_freeze_uq' + str(args.freeze) + '_reg_' + str(args.reg) + '_noise_' + str(args.noise_config) + "uq_loss" + str(args.uq_loss) + '.pt')
+    filename = os.path.join('./log', args.dir, 'DynMMNet_freeze_uq' + str(args.freeze) + '_reg_' + str(args.reg) + '_noise' + str(args.noise_config) + "uq_loss" + str(args.uq_loss) + '.pt')
 
     if not args.eval_only:
         model.hard_gate = args.hard
@@ -284,6 +286,7 @@ if __name__ == '__main__':
                 objective=torch.nn.BCEWithLogitsLoss(pos_weight=compute_pos_weights(train_data)), moe_model=model, additional_loss=True, lossw=args.reg)
 
     # Test
+
     print(f"Testing model {filename}:")
     model = torch.load(filename).cuda()
     model.hard_gate = True
@@ -300,8 +303,8 @@ if __name__ == '__main__':
     if args.uq_loss:
         print(test_dynmm_multilabel(model, test_data, objective=torch.nn.BCEWithLogitsLoss(pos_weight=compute_pos_weights(test_data))))
     else:
-         tmp = test(model=model, test_dataloaders_all=test_data, dataset=args.data, is_packed=False,
-                criterion=torch.nn.BCEWithLogitsLoss(pos_weight=compute_pos_weights(test_data)), task="multilabel", no_robust=True, additional_loss=True)
+        tmp = test(model=model, test_dataloaders_all=test_data, dataset=args.data, is_packed=False,
+                    criterion=torch.nn.BCEWithLogitsLoss(pos_weight=compute_pos_weights(test_data)), task="multilabel", no_robust=True, additional_loss=True)
     print(model.get_selection_stats())
     print(model.weight_stat())
     print(tmp['f1_micro'], tmp['f1_macro'], model.cal_flop())

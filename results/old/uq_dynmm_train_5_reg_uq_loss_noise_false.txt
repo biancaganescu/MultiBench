@@ -1,0 +1,71 @@
+Loaded split indices from split_indices.pth
+Epoch 1/5: 100%|████████████████████████████████████████████████████████████████████████████████| 46/46 [00:15<00:00,  2.93it/s, loss=0.89, task_loss=0.18, resource_loss=1.42]
+mean branch weight 0.6273, 0.3727
+----------------------------------------------------------------------
+Epoch 1/5:
+Train loss: 0.8895 | Task loss: 0.1805 | Resource loss: 1.4181
+Val loss: 0.7032 | F1 micro: 0.8885 | F1 macro: 0.6829
+Branch weights: 0.3727
+No samples processed yet.
+New best F1 macro: 0.6829, saving model to ./log/test_chestx/DynMMNet_freeze_uqTrue_reg_0.5_noise_Noneuq_lossTrue.pt
+Epoch 2/5: 100%|██████████████████████████████████████████████████████████████████████████████| 46/46 [00:15<00:00,  3.00it/s, loss=0.453, task_loss=0.17, resource_loss=0.566]
+mean branch weight 0.6117, 0.3883
+----------------------------------------------------------------------
+Epoch 2/5:
+Train loss: 0.4525 | Task loss: 0.1696 | Resource loss: 0.5660
+Val loss: 0.6782 | F1 micro: 0.8863 | F1 macro: 0.6705
+Branch weights: 0.3883
+No samples processed yet.
+No improvement, patience: 1/7
+Epoch 3/5: 100%|█████████████████████████████████████████████████████████████████████████████| 46/46 [00:15<00:00,  3.00it/s, loss=0.351, task_loss=0.145, resource_loss=0.412]
+mean branch weight 0.5709, 0.4291
+----------------------------------------------------------------------
+Epoch 3/5:
+Train loss: 0.3513 | Task loss: 0.1453 | Resource loss: 0.4121
+Val loss: 0.6656 | F1 micro: 0.8893 | F1 macro: 0.6665
+Branch weights: 0.4291
+No samples processed yet.
+No improvement, patience: 2/7
+Epoch 4/5: 100%|██████████████████████████████████████████████████████████████████████████████| 46/46 [00:15<00:00,  2.99it/s, loss=0.291, task_loss=0.12, resource_loss=0.341]
+mean branch weight 0.5302, 0.4698
+----------------------------------------------------------------------
+Epoch 4/5:
+Train loss: 0.2906 | Task loss: 0.1202 | Resource loss: 0.3409
+Val loss: 0.6481 | F1 micro: 0.8902 | F1 macro: 0.6774
+Branch weights: 0.4698
+No samples processed yet.
+No improvement, patience: 3/7
+Epoch 5/5: 100%|██████████████████████████████████████████████████████████████████████████████| 46/46 [00:15<00:00,  3.00it/s, loss=0.246, task_loss=0.101, resource_loss=0.29]
+mean branch weight 0.4848, 0.5152
+----------------------------------------------------------------------
+Epoch 5/5:
+Train loss: 0.2465 | Task loss: 0.1013 | Resource loss: 0.2904
+Val loss: 0.6399 | F1 micro: 0.8948 | F1 macro: 0.7032
+Branch weights: 0.5152
+No samples processed yet.
+New best F1 macro: 0.7032, saving model to ./log/test_chestx/DynMMNet_freeze_uqTrue_reg_0.5_noise_Noneuq_lossTrue.pt
+Training completed. Best F1 macro: 0.7032
+Testing model ./log/test_chestx/DynMMNet_freeze_uqTrue_reg_0.5_noise_Noneuq_lossTrue.pt:
+------------------------------Test data------------------------------
+mean branch weight 0.5230, 0.4770
+Total Flops 11.56M
+----------------------------------------------------------------------
+Test Results:
+Loss: 0.2988 | F1 micro: 0.8659 | F1 macro: 0.6701
+Average branch fusion weight: 0.4770
+Effective FLOPs: 11.56M
+Branch selection statistics:
+Branch 1: selected 193.0 times (52.30% of samples)
+Branch 2: selected 176.0 times (47.70% of samples)
+
+{'f1_micro': 0.8658649398704903, 'f1_macro': 0.6701032347670361, 'loss': 0.2988030477994826, 'fusion_weight': 0.4769647717475891, 'flops': 11.555000305175781}
+Branch selection statistics:
+Branch 1: selected 193.0 times (52.30% of samples)
+Branch 2: selected 176.0 times (47.70% of samples)
+
+mean branch weight 0.5230, 0.4770
+0.4769647717475891
+Traceback (most recent call last):
+  File "ModalityDynMM/chestx/chestx_dynmm_uq_2branches.py", line 311, in <module>
+    print(tmp['f1_micro'], tmp['f1_macro'], model.cal_flop())
+NameError: name 'tmp' is not defined

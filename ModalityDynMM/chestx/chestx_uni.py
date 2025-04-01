@@ -66,7 +66,7 @@ if __name__ == '__main__':
             model = VGG11Slim(256).cuda()
             head = MLP(256, 256, 14).cuda() 
 
-        train_data, val_data, test_data = get_data(batch_size=32, num_workers=4)
+        train_data, val_data, test_data = get_data(batch_size=64, num_workers=4)
 
         if not args.eval_only:
             train(model, head, train_data, val_data, 10, early_stop=True, task="multilabel",

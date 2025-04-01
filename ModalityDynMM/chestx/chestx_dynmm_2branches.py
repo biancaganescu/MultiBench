@@ -184,12 +184,12 @@ if __name__ == '__main__':
     if args.noise and not args.eval_only:
         train_data, val_data, test_data = get_noisy_data_loaders(corruption_config=args.noise_config, batch_size=64)
     elif args.noise and args.eval_only:
-        get_noisy_data_loaders(corruption_config=args.noise_config, load_train=False, load_val=False, batch_size=64)
+        _, _, test_data = get_noisy_data_loaders(corruption_config=args.noise_config, apply_to_train=False, apply_to_val=False, batch_size=64)
     else:
         train_data, val_data, test_data = get_data(64)
     # Init Model
     model = DynMMNet(pretrain=1-args.no_pretrain, freeze=args.freeze, directory=args.dir)
-    filename = os.path.join('./log', args.data, 'DynMMNet_freeze' + str(args.freeze) + '_reg_' + str(args.reg) + '_noise_' + str(args.noise_config) + '.pt')
+    filename = os.path.join('./log', args.dir, 'DynMMNet_freeze' + str(args.freeze) + '_reg_' + str(args.reg) + '_noise_' + str(args.noise_config) + '.pt')
 
     if not args.eval_only:
         model.hard_gate = args.hard
