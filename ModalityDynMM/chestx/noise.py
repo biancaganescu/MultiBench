@@ -315,7 +315,8 @@ def get_noisy_data_loaders(
     max_seq_length=256,
     noise_seed=42
 ):
-    
+    random.seed(10)
+    torch.manual_seed(10)
     config_to_use = corruption_config
     
     from mm_health_bench.mmhb.loader import ChestXDataset

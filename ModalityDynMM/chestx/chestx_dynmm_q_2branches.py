@@ -197,13 +197,8 @@ if __name__ == '__main__':
     argparser.add_argument("--hard", action='store_true', help='hard labels')
     argparser.add_argument("--no-pretrain", action='store_true', help='train from scratch')
     argparser.add_argument("--infer-mode", type=int, default=0, help="infer mode")
-    argparser.add_argument("--balanced", action='store_true', help='balanced dataset')
     argparser.add_argument("--noise", action='store_true', help='noisy dataset')
-    argparser.add_argument("--text_noise_type", default=None, help='text noise dataset')
-    argparser.add_argument("--image_noise_type", default=None, help='text noise type')
-    argparser.add_argument("--corruption-name", default=None, help='text noise type')
-    argparser.add_argument("--text_noise_percentage", type=int, default=100, help='text noise dataset')
-    argparser.add_argument("--image_noise_percentage", type=int, default=100, help='text noise type')
+    argparser.add_argument("--noise_config", default=None, help='noise config')
     argparser.add_argument("--dir", default='chestx/', help='folder to store results')
     
 
@@ -212,14 +207,14 @@ if __name__ == '__main__':
     os.environ['CUDA_VISIBLE_DEVICES'] = str(args.gpu)
     
     if args.noise and not args.eval_only:
-        train_data, val_data, test_data = get_noisy_data_loaders()
+        train_data, val_data, test_data = get_noisy_data_loaders(corruption_config=args.noise_config)
     elif args.noise and args.eval_only:
-        get_noisy_data_loaders(load_train=False, load_val=False)
+        get_noisy_data_loaders(corruption_config=args.noise_config, load_train=False, load_val=False)
     else:
         train_data, val_data, test_data = get_data(32)
     # Init Model
     model = DynMMNet(pretrain=1-args.no_pretrain, freeze=args.freeze, directory=args.dir)
-    filename = os.path.join('./log', args.data, 'DynMMNet_freeze_uq' + str(args.freeze) + '_reg_' + str(args.reg) + '.pt')
+    filename = os.path.join('./log', args.data, 'DynMMNet_freeze_uq' + str(args.freeze) + '_reg_' + str(args.reg) + '_noise_' + str(args.noise_config) + '.pt')
 
     if not args.eval_only:
         model.hard_gate = args.hard
