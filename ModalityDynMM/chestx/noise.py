@@ -15,7 +15,6 @@ import torchvision
 
 class NoiseAugmenter:
 
-    # Image noise functions 
 
     @staticmethod
     def add_gaussian_noise_to_image(image, mean=0.0, std=0.1):
@@ -27,11 +26,9 @@ class NoiseAugmenter:
     def add_salt_and_pepper_noise(image, amount=0.05):
         noisy_image = image.clone()
         
-        # Salt noise
         salt_mask = torch.rand_like(image) < (amount/2)
         noisy_image[salt_mask] = 1.0
         
-        # Pepper noise
         pepper_mask = torch.rand_like(image) < (amount/2)
         noisy_image[pepper_mask] = 0.0
         
@@ -40,12 +37,10 @@ class NoiseAugmenter:
     
     @staticmethod
     def reduce_image_quality(image, blur_factor=1.5, noise_level=0):
-        # Apply Gaussian blur
         kernel_size = int(blur_factor * 2) * 2 + 1  # Ensure odd kernel size
         blurred = torchvision.transforms.functional.gaussian_blur(image, kernel_size=[kernel_size, kernel_size], 
                                  sigma=[blur_factor, blur_factor])
         
-        # Add noise
         noisy_blurred = NoiseAugmenter.add_gaussian_noise_to_image(blurred, std=noise_level)
         
         return noisy_blurred
@@ -55,24 +50,20 @@ class NoiseAugmenter:
         masked_image = image.clone()
         batch_size, channels, height, width = image.shape
         
-        # Size of mask in pixels
         mask_h = int(height * mask_size)
         mask_w = int(width * mask_size)
         
         for b in range(batch_size):
             for _ in range(num_masks):
-                # Random position for mask
                 top = random.randint(0, height - mask_h)
                 left = random.randint(0, width - mask_w)
                 
-                # Apply mask (set to mean value of the image)
                 mean_value = image[b].mean()
                 masked_image[b, :, top:top+mask_h, left:left+mask_w] = mean_value
         
         return masked_image
     
     
-    # Text Noise Functions
     
     @staticmethod
     def add_word_dropout(text, dropout_prob=0.3):
@@ -95,11 +86,9 @@ class NoiseAugmenter:
         
         for b in range(batch_size):
             for i in range(seq_len - 1):
-                # Skip padding tokens
                 if text[b, i] == 0 or text[b, i+1] == 0:
                     continue
                     
-                # Random swap with probability
                 if random.random() < swap_prob:
                     result[b, i], result[b, i+1] = text[b, i+1], text[b, i]
         
@@ -115,13 +104,10 @@ class NoiseAugmenter:
         
         for b in range(batch_size):
             for i in range(seq_len):
-                # Skip padding tokens
                 if text[b, i] == pad_token_id:
                     continue
                     
-                # Corrupt with probability
                 if random.random() < corruption_prob:
-                    # Replace with a random token (excluding pad token)
                     random_token = random.randint(1, vocab_size - 1)
                     corrupted[b, i] = random_token
         
@@ -129,15 +115,11 @@ class NoiseAugmenter:
 
 
 
-# Generate a unique hash for a corruption configuration
 def get_config_hash(config):
-    # Create a deterministic string representation of the config
     config_str = json.dumps(config, sort_keys=True)
-    # Create a hash of the config string
     return hashlib.md5(config_str.encode()).hexdigest()
 
 
-# Create directories for indices if they don't exist
 def ensure_indices_dir():
     indices_dir = os.path.join(os.getcwd(), "noise_indices")
     if not os.path.exists(indices_dir):
@@ -145,14 +127,11 @@ def ensure_indices_dir():
     return indices_dir
 
 
-# Generate or load noise indices for a specific batch size and configuration
 def get_noise_indices(dataset_size, batch_size, config, split_name, seed=42):
     random.seed(seed)
     
-    # Get directory for indices
     indices_dir = ensure_indices_dir()
     
-    # Generate a unique filename based on the configuration, dataset size, and batch size
     config_hash = get_config_hash(config)
     indices_filename = f"{split_name}_{config_hash}_{dataset_size}_{batch_size}.json"
     indices_path = os.path.join(indices_dir, indices_filename)
@@ -160,7 +139,6 @@ def get_noise_indices(dataset_size, batch_size, config, split_name, seed=42):
     if os.path.exists(indices_path):
         with open(indices_path, 'r') as f:
             batch_noise_indices = json.load(f)
-        print(f"Loaded existing noise indices for {split_name} split from {indices_path}")
         return batch_noise_indices
 
     image_noise_percentage = config.get("image_noise_percentage", 0)
@@ -174,29 +152,24 @@ def get_noise_indices(dataset_size, batch_size, config, split_name, seed=42):
         current_batch_size = min(batch_size, dataset_size - i * batch_size)
         batch_indices = list(range(current_batch_size))
         
-        # Generate noise indices for this batch
         batch_dict = {
             "image_indices": [],
             "text_indices": []
         }
         
-        # Image noise indices
         if image_noise_percentage > 0:
             num_noisy_images = max(1, int(current_batch_size * image_noise_percentage / 100))
             batch_dict["image_indices"] = sorted(random.sample(batch_indices, num_noisy_images))
         
-        # Text noise indices
         if text_noise_percentage > 0:
             num_noisy_texts = max(1, int(current_batch_size * text_noise_percentage / 100))
             batch_dict["text_indices"] = sorted(random.sample(batch_indices, num_noisy_texts))
         
         batch_noise_indices.append(batch_dict)
     
-    # Save indices for future use
     with open(indices_path, 'w') as f:
         json.dump(batch_noise_indices, f)
     
-    print(f"Generated and saved new noise indices for {split_name} split to {indices_path}")
     return batch_noise_indices
 
 
@@ -206,15 +179,13 @@ def noisy_chestx_collate_fn(batch, corruption_config=None, batch_idx=0, noise_in
     targets = [sample[1] for sample in batch]
     
     images = torch.stack(images, dim=0)
-    reports = torch.stack(reports, dim=0)  # (batch, seq)
-    targets = torch.tensor(targets, dtype=torch.float)  # (batch, num_labels)
-
+    reports = torch.stack(reports, dim=0)  
+    targets = torch.tensor(targets, dtype=torch.float)  
     if corruption_config is None or noise_indices is None:
         return reports, images, targets
     
 
     if batch_idx >= len(noise_indices):
-        print(f"Warning: batch_idx {batch_idx} out of range for noise_indices of length {len(noise_indices)}")
         return reports, images, targets
     
     current_noise_indices = noise_indices[batch_idx]
@@ -350,9 +321,7 @@ def get_noisy_data_loaders(
             'test': test_dataset.indices,
         }
         torch.save(indices, indices_path)
-        print(f"Saved split indices to {indices_path}")
     
-    print("Creating noisy data loaders with consistent indices")
     
     train_loader = NoiseDataLoader(
         dataset=train_dataset, 
